@@ -54,7 +54,10 @@ proto.addProtocol(require('./data/fml3.json'), ['fml3'])
  *  registries: Object.<string, string> | undefined
  * }} options
  */
-module.exports = function (client, options) {
+module.exports = {
+  forgeHandshake: run
+}
+function run(client, options) {
   const modNames = options.forgeMods
   const channels = options.channels
   const registries = options.registries
@@ -88,9 +91,37 @@ module.exports = function (client, options) {
   // and make the server disconnect us
   const nmplistener = client.listeners('login_plugin_request').find((fn) => fn.name === 'onLoginPluginRequest')
   client.removeListener('login_plugin_request', nmplistener)
-
   client.on('login_plugin_request', (data) => {
-    if (data.channel === 'fml:loginwrapper') {
+    if (data instanceof Array) {
+      if (data[0].messageId === 0) return;
+      switch(data[0].channel) {
+        case "fml:loginwrapper": {
+          const packet = proto.createPacketBuffer(
+            PROTODEF_TYPES.LOGINWRAPPER,
+            {
+              channel: FML_CHANNELS.HANDSHAKE,
+              data: proto.createPacketBuffer(PROTODEF_TYPES.HANDSHAKE, {
+                discriminator: 'Acknowledgement',
+                data: {}
+              })
+            }
+          )
+          client.write('login_plugin_response', {
+            messageId: data[0].messageId,
+            data: packet
+          })
+          break;
+        }
+        default: {
+          client.write('login_plugin_response', {
+            messageId: data[0].messageId,
+          })
+          break;
+        }
+      }
+    if (data[0].messageId == 0) return;
+      
+    } else if (data.channel === 'fml:loginwrapper') {
       // parse buffer
       const { data: loginwrapper } = proto.parsePacketBuffer(
         PROTODEF_TYPES.LOGINWRAPPER,
@@ -100,14 +131,12 @@ module.exports = function (client, options) {
       if (!loginwrapper.channel) {
         console.error(loginwrapper)
       }
-
       switch (loginwrapper.channel) {
         case 'fml:handshake': {
           const { data: handshake } = proto.parsePacketBuffer(
             PROTODEF_TYPES.HANDSHAKE,
             loginwrapper.data
           )
-
           let loginwrapperpacket = Buffer.alloc(0)
           switch (handshake.discriminator) {
             // respond with ModListResponse
@@ -238,7 +267,7 @@ module.exports = function (client, options) {
             case 'Acknowledgement':
               throw Error('received clientbound-only Acknowledgement from server')
           }
-
+          if (data.messageId == 0) break;
           client.write('login_plugin_response', {
             messageId: data.messageId,
             data: loginwrapperpacket
